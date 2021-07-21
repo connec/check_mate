@@ -2,5 +2,7 @@
 name = "check_mate"
 version = "0.1.0"
 edition = "2018"
-
-[dependencies]
+authors = ["Chris Connelly <chris@connec.co.uk>"]
+description = "Check yourself before you wreck yourself."
+license = "MIT"
+repository = "https://github.com/connec/check_mate"
