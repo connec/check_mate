@@ -204,7 +204,12 @@
 //! ```
 //!
 //! `Checked<T>` implements `Deref<Target = T>`, and can be converted back to the inner value with
-//! [`into_inner`](Checked::into_inner). And for now, that's it!
+//! [`into_inner`](Checked::into_inner).
+//!
+//! With the `serde` feature enabled, `Checked<T>` will also implement `Serialize` if
+//! `T: Serialize`, and `Deserialize` if `T: Deserialize` **and** there's a `Check<Ok = T>` impl to
+//! use for the check (unconstrained type parameter limitations prevent a blanket `Deserialize` impl
+//! for any `U: Check<Ok = T>` – it must be `T` itself).
 //!
 //! # When (not) to use this
 //!
@@ -232,24 +237,25 @@
 //!
 //! - Implement additional common traits (`AsRef<T>`, `Borrow<T>`).
 //! - Implement additional common indirection methods (`as_deref`, `cloned`).
-//! - Serde support, ensuring values are checked when deserializing.
 
 #![warn(clippy::pedantic)]
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 /// A checked value.
 ///
 /// The wrapped value is guaranteed to be valid with respect to its implementation of [`Check`].
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Checked<T>(T);
 
-impl<T: Check> Checked<T> {
+impl<T> Checked<T> {
     /// Check a value.
     ///
     /// # Errors
     ///
     /// This will return the error from [`Check::check`] verbatim if the check fails.
-    pub fn try_from(value: T) -> Result<Checked<T::Ok>, T::Err> {
+    pub fn try_from<U: Check<Ok = T>>(value: U) -> Result<Self, U::Err> {
         value.check().map(Checked)
     }
 }
@@ -280,6 +286,23 @@ impl<T> core::ops::Deref for Checked<T> {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<'de, T> serde::Deserialize<'de> for Checked<T>
+where
+    T: serde::Deserialize<'de> + Check<Ok = T>,
+    T::Err: core::fmt::Display,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let value = T::deserialize(deserializer)?;
+        Self::try_from(value).map_err(D::Error::custom)
+    }
+}
+
 /// Checked values.
 pub trait Check {
     /// The value returned when the check passes.
@@ -302,6 +325,7 @@ pub trait Check {
 #[cfg(test)]
 mod tests {
     #[derive(Debug, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
     struct LessThan10(usize);
 
     impl Check for LessThan10 {
@@ -346,5 +370,32 @@ mod tests {
     #[test]
     fn from() {
         assert_eq!(&*Checked::from(GenLessThan10), &LessThan10(3));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn deserialize() {
+        assert_eq!(
+            serde_json::from_str::<Checked<LessThan10>>("3")
+                .ok()
+                .as_deref(),
+            Some(&LessThan10(3))
+        );
+
+        assert_eq!(
+            serde_json::from_str::<Checked<LessThan10>>("10")
+                .err()
+                .map(|error| error.to_string()),
+            Some("too big".to_string())
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serialize() {
+        assert_eq!(
+            serde_json::to_string(&Checked::from(GenLessThan10)).unwrap(),
+            serde_json::to_string(&LessThan10(3)).unwrap()
+        );
     }
 }
