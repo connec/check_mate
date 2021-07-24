@@ -254,6 +254,17 @@ impl<T: Check> Checked<T> {
     }
 }
 
+impl<T: Check<Err = core::convert::Infallible>> Checked<T> {
+    /// Construct a checked value.
+    ///
+    /// Rather than generating a value known to be valid, then having to check it, this can be used
+    /// to immediately construct a valid value, so long as the [`Check`] implementation doesn't
+    /// fail.
+    pub fn from(value: T) -> Checked<T::Ok> {
+        value.check().map(Checked).expect("infallible")
+    }
+}
+
 impl<T> Checked<T> {
     /// Retrieve the inner value, dropping the 'proof' that it was checked.
     pub fn into_inner(self) -> T {
@@ -306,6 +317,17 @@ mod tests {
         }
     }
 
+    struct GenLessThan10;
+
+    impl Check for GenLessThan10 {
+        type Ok = LessThan10;
+        type Err = core::convert::Infallible;
+
+        fn check(self) -> Result<Self::Ok, Self::Err> {
+            Ok(LessThan10(3))
+        }
+    }
+
     use super::{Check, Checked};
 
     #[test]
@@ -319,5 +341,10 @@ mod tests {
             Checked::try_from(LessThan10(11)).as_deref(),
             Err(&"too big")
         );
+    }
+
+    #[test]
+    fn from() {
+        assert_eq!(&*Checked::from(GenLessThan10), &LessThan10(3));
     }
 }
